@@ -1,16 +1,20 @@
 package com.tus.service;
 
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
+import java.util.Optional;
+import java.util.UUID;
 
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.client.RestTemplate;
 
+import com.tus.exception.EmployeeExistenceException;
 import com.tus.exception.ResourceNotFoundException;
 import com.tus.model.Department;
 import com.tus.model.Employee;
@@ -22,7 +26,7 @@ public class EmployeeService {
 
 	@Autowired
 	private EmployeeRepository employeeRepository;
-	
+
 	private final String BASE_URL = "http://localhost:8081/api/v1/department/";
 
 	private final RestTemplate restTemplate = new RestTemplate();
@@ -30,13 +34,25 @@ public class EmployeeService {
 	public List<Employee> getAllEmployees() {
 		List<Employee> empList = employeeRepository.findAll();
 		return empList;
-		
-	}
 
-	public Employee createEmployee(@RequestBody Employee employee) {
-		return employeeRepository.save(employee);
 	}
+	
+	public Employee save(Employee emp) {
 
+		Optional<List<Employee>> empDb = employeeRepository.findByEmailId(emp.getEmailId());
+
+		if (!empDb.isPresent()) {
+			throw new EmployeeExistenceException(
+					"Employee with email : " + emp.getEmailId() + " already exists.");
+		}
+		try {
+			Employee emp1 = employeeRepository.save(emp);
+			return emp1;
+		} catch (Exception ex) {
+			throw new ResourceNotFoundException(
+					"Employee not created");
+		}
+	}
 
 	public ResponseEntity<Employee> updateEmployee(@PathVariable Long id, @RequestBody Employee employeeDetails) {
 		Employee employee = employeeRepository.findById(id)
@@ -48,41 +64,68 @@ public class EmployeeService {
 		return ResponseEntity.ok(updatedEmployee);
 	}
 
-	public ResponseEntity<Map<String, Boolean>> deleteEmployee(@PathVariable Long id) {
-		Employee employee = employeeRepository.findById(id)
-				.orElseThrow(() -> new ResourceNotFoundException("Employee not exist with id :" + id));
-
-		employeeRepository.delete(employee);
-		Map<String, Boolean> response = new HashMap<>();
-		response.put("deleted", Boolean.TRUE);
-		return ResponseEntity.ok(response);
-	}
-	
 	public EmployeeResp getEmployeeById(Long id) {
-		Employee employee = employeeRepository.findById(id)
-				.orElseThrow(() -> new ResourceNotFoundException("Employee not exist with id :" + id));
-		Department dpt = getDepartmentByName(employee.getDepartment());
-		EmployeeResp er = deptMapper(dpt, employee);
+
+		try {
+			Employee employee = employeeRepository.findById(id)
+					.orElseThrow(() -> new ResourceNotFoundException("Employee not exist with id :" + id));
+			Department dpt = getDepartmentByName(employee.getDepartment());
+			EmployeeResp er = deptMapper(dpt, employee);
+			return er;
+		} catch (Exception ex) {
+			throw new ResourceNotFoundException("Employee with Id: " + id + " not found");
+
+		}
+	}
+
+	public Department getDepartmentByName(String name) {
+		String url = BASE_URL + "deptName/" + name;
+		// Generate a UUID for correlation ID
+		String correlationId = UUID.randomUUID().toString();
+
+		// Set the correlation ID in the request header
+		HttpHeaders headers = new HttpHeaders();
+		headers.add("tus-correlation-id", correlationId);
+		HttpEntity<String> requestEntity = new HttpEntity<>(headers);
+
+		// Send the request with the correlation ID header
+		ResponseEntity<Department> response = restTemplate.exchange(url, HttpMethod.GET, requestEntity,
+				Department.class);
+
+		// ResponseEntity<Department> response =
+		// restTemplate.getForEntity(url,Department.class);
+		if (response.getStatusCode().is2xxSuccessful()) {
+			return response.getBody();
+		} else {
+			throw new RuntimeException("Failed to fetch department by name: " + name);
+		}
+	}
+
+	public EmployeeResp deptMapper(Department dept, Employee emp) {
+		EmployeeResp er = new EmployeeResp();
+		er.setDepartment(dept);
+		er.setEmailId(emp.getEmailId());
+		er.setMobile(emp.getMobile());
+		er.setName(emp.getName());
 		return er;
 	}
 
-    public Department getDepartmentByName(String name) {
-        String url = BASE_URL + "deptName/" + name;
-        ResponseEntity<Department> response = restTemplate.getForEntity(url, Department.class);
-        if (response.getStatusCode().is2xxSuccessful()) {
-            return response.getBody();
-        } else {
-            throw new RuntimeException("Failed to fetch department by name: " + name);
-        }
-    }
-    
-    public EmployeeResp deptMapper(Department dept, Employee emp) {
-    	EmployeeResp er = new EmployeeResp();
-    	er.setDepartment(dept);
-    	er.setEmailId(emp.getEmailId());
-    	er.setMobile(emp.getMobile());
-    	er.setName(emp.getName());
-    	return er;
-    }
+	public Employee updateEmployee(Employee newEmp, Long id) {
+		Employee empDb = employeeRepository.findById(id)
+				.orElseThrow(() -> new ResourceNotFoundException("Department not exist with id :" + id));
+
+		empDb.setName(newEmp.getName());
+		empDb.setEmailId(newEmp.getEmailId());
+		empDb.setDepartment(newEmp.getDepartment());
+		empDb.setMobile(newEmp.getMobile());
+		Employee updatedEmp = employeeRepository.save(empDb);
+		return updatedEmp;
+	}
+
+	public void deleteEmp(Long id) {
+		Employee department = employeeRepository.findById(id)
+				.orElseThrow(() -> new ResourceNotFoundException("Employee deos not exist with id :" + id));
+		employeeRepository.delete(department);
+	}
 
 }
